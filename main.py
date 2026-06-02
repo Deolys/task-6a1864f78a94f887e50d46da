@@ -1,77 +1,89 @@
+"""
+RAG Agent with ChromaDB and Tavily web search.
+Author: Student (task 6a1864f78a94f887e50d46da)
+"""
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain_ollama import OllamaEmbeddings, ChatOllama
-from langchain_qdrant import QdrantVectorStore
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.tools import tool
-from langchain.agents import initialize_agent, AgentExecutor, AgentType
-from tavily import TavilyClient
 
-# Load environment variables
+# Load environment variables (TAVILY_API_KEY)
 load_dotenv()
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-if not TAVILY_API_KEY:
-    raise ValueError("TAVILY_API_KEY not set in .env")
 
-# Embedding model
-embeddings = OllamaEmbeddings(model="nomic-embed-text")
+# --- Vector Store Setup -----------------------------------------------------
+from langchain_ollama.embeddings import OllamaEmbeddings
+from langchain_chroma import Chroma
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# Qdrant client (assumes local server running on default port 6333)
-qdrant_client = QdrantClient(host="localhost", port=6333)
-collection_name = "rag_agent_collection"
-vectorstore = QdrantVectorStore(
-    client=qdrant_client,
-    collection_name=collection_name,
-    embeddings=embeddings,
+EMBEDDING_MODEL = "nomic-embed-text"
+CHROMA_DIR = Path("./chroma_db")
+DOCS_DIR = Path("./documents")
+
+# Create or load vector store
+vectorstore = Chroma(
+    persist_directory=str(CHROMA_DIR),
+    embedding_function=OllamaEmbeddings(model=EMBEDDING_MODEL),
 )
 
-# Load documents from ./documents/
+# Load documents if collection is empty
+if not list(vectorstore.get_collection().list_documents()):
+    # Read all .txt and .md files
+    texts = []
+    for file_path in DOCS_DIR.rglob("*.txt"):
+        texts.append(file_path.read_text(encoding="utf-8"))
+    for file_path in DOCS_DIR.rglob("*.md"):
+        texts.append(file_path.read_text(encoding="utf-8"))
 
-def load_documents(directory: str):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    docs = []
-    for file_path in Path(directory).glob("**/*.*"):
-        if file_path.suffix.lower() not in {".txt", ".md"}:
-            continue
-        content = file_path.read_text(encoding="utf-8")
-        splits = text_splitter.split_text(content)
-        docs.extend([{"page_content": s, "metadata": {"source": str(file_path)}} for s in splits])
-    return docs
+    if texts:
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = splitter.split_documents([{"page_content": t} for t in texts])
+        vectorstore.add_documents(docs)
+        # Persist the collection
+        vectorstore.persist()
 
-# Index documents if collection empty
-if not vectorstore.client.count(collection_name=collection_name).count:
-    docs = load_documents("documents")
-    vectorstore.add_texts([d["page_content"] for d in docs], [d["metadata"] for d in docs])
+# Retriever for local knowledge base
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-# Tools
-@tool(name="search_local_kb", description="Semantic search in local knowledge base using Qdrant. Returns top_k results.")
-def search_local_kb(query: str, top_k: int = 3) -> str:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": top_k})
-    docs = retriever.get_relevant_documents(query)
-    return "\n---\n".join([f"{d.page_content[:500]}... (source: {d.metadata.get('source')})" for d in docs])
+# --- Tools ---------------------------------------------------------------
+from langchain.tools import Tool
+from langchain_community.utilities.tavily_search import TavilySearchResults
 
-@tool(name="web_search", description="Search the web using Tavily API.")
-def web_search(query: str) -> str:
-    client = TavilyClient(api_key=TAVILY_API_KEY)
-    results = client.search(query, max_results=3)
-    return "\n---\n".join([f"{r.title}\n{r.url}\n{r.content[:500]}..." for r in results])
+# Local KB search tool
+search_local_kb_tool = Tool(
+    name="search_local_kb",
+    func=lambda query, top_k=3: "\n".join([f"{i+1}. {doc.metadata.get('source', 'unknown')} – {doc.page_content[:200]}..."
+                                            for i, doc in enumerate(retriever.invoke(query))]),
+    description="Search the local knowledge base using ChromaDB. Provide a query and optional top_k (default 3). Returns formatted snippets.",
+)
 
-# Agent setup
-tools = [search_local_kb, web_search]
-llm = ChatOllama(model="llama3")
+# Web search tool via Tavily
+search_web_tool = Tool(
+    name="web_search",
+    func=lambda query: "\n".join([f"{i+1}. {res['title']} – {res['url']}"
+                                   for i, res in enumerate(TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY")).run(query))],
+    description="Perform a web search using Tavily. Provide a query string.",
+)
+
+# --- Agent ---------------------------------------------------------------
+from langchain.agents import initialize_agent, AgentType
+from langchain.chat_models import ChatOllama
+
+chat = ChatOllama(model="llama3")
 agent_executor = initialize_agent(
-    tools,
-    llm,
+    tools=[search_local_kb_tool, search_web_tool],
+    llm=chat,
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
     verbose=True,
 )
 
-# CLI loop
+# --- CLI ---------------------------------------------------------------
 print("RAG Agent ready. Type 'exit' to quit.")
 while True:
     user_input = input("\nQuery: ")
-    if user_input.lower() in {"exit", "quit"}:
+    if user_input.strip().lower() == "exit":
+        print("Goodbye!")
         break
-    response = agent_executor.run(user_input)
-    print(f"\nAnswer:\n{response}")
+    try:
+        response = agent_executor.run(user_input)
+        print(f"\nAnswer:\n{response}")
+    except Exception as e:
+        print(f"Error: {e}")
