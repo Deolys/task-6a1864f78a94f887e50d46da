@@ -1,7 +1,5 @@
 langchain
-langchain-chroma
-langchain-tavily
-langchain-ollama
+chromadb
 tavily-python
 python-dotenv
-chromadb
+langchain-community

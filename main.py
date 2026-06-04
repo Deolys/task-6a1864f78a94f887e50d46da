@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Vector Store Setup -----------------------------------------------------
-from langchain_ollama.embeddings import OllamaEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
@@ -46,36 +46,39 @@ if not vectorstore.get_collection().list_documents():
 retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
 # --- Tools ---------------------------------------------------------------
-from langchain.tools import Tool
+from langchain.tools import tool
 from langchain_community.utilities.tavily_search import TavilySearchResults
 
-# Local KB search tool
-search_local_kb_tool = Tool(
-    name="search_local_kb",
-    func=lambda query, top_k=3: "\n".join([
+@tool("search_local_kb")
+def search_local_kb(query: str, top_k: int = 3) -> str:
+    """
+    Search the local knowledge base using ChromaDB. Provide a query and optional top_k (default 3). Returns formatted snippets.
+    """
+    results = retriever.invoke(query)
+    return "\n".join([
         f"{i+1}. {doc.metadata.get('source', 'unknown')} – {doc.page_content[:200]}..."
-        for i, doc in enumerate(retriever.invoke(query))
-    ]),
-    description="Search the local knowledge base using ChromaDB. Provide a query and optional top_k (default 3). Returns formatted snippets.",
-)
+        for i, doc in enumerate(results)
+    ])
 
-# Web search tool via Tavily
-search_web_tool = Tool(
-    name="web_search",
-    func=lambda query: "\n".join([
+@tool("web_search")
+def web_search(query: str) -> str:
+    """
+    Perform a web search using Tavily. Provide a query string.
+    """
+    tavily = TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"))
+    results = tavily.run(query)
+    return "\n".join([
         f"{i+1}. {res['title']} – {res['url']}"
-        for i, res in enumerate(TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY")).run(query))
-    ]),
-    description="Perform a web search using Tavily. Provide a query string.",
-)
+        for i, res in enumerate(results)
+    ])
 
 # --- Agent ---------------------------------------------------------------
 from langchain.agents import initialize_agent, AgentType
-from langchain.chat_models import ChatOllama
+from langchain_community.chat_models import ChatOllama
 
 chat = ChatOllama(model="llama3")
 agent_executor = initialize_agent(
-    tools=[search_local_kb_tool, search_web_tool],
+    tools=[search_local_kb, web_search],
     llm=chat,
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
     verbose=True,
