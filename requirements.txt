@@ -1,6 +1,7 @@
 langchain
-langchain_qdrant
-langchain_ollama
-langchain_tavily
+langchain-chroma
+langchain-tavily
+langchain-ollama
 tavily-python
 python-dotenv
+chromadb
