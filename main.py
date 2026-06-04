@@ -46,7 +46,7 @@ if not vectorstore.get_collection().list_documents():
 retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
 # --- Tools ---------------------------------------------------------------
-from langchain.tools import tool
+from langchain.tools import tool, Tool
 from langchain_community.utilities.tavily_search import TavilySearchResults
 
 @tool("search_local_kb")
@@ -72,15 +72,18 @@ def web_search(query: str) -> str:
         for i, res in enumerate(results)
     ])
 
+# Convert functions to Tool objects for AgentExecutor
+search_local_kb_tool = Tool.from_function(name="search_local_kb", func=search_local_kb, description="Search local knowledge base")
+web_search_tool = Tool.from_function(name="web_search", func=web_search, description="Web search via Tavily")
+
 # --- Agent ---------------------------------------------------------------
-from langchain.agents import initialize_agent, AgentType
-from langchain_community.chat_models import ChatOllama
+from langchain_ollama import ChatOllama
+from langchain.agents import AgentExecutor
 
 chat = ChatOllama(model="llama3")
-agent_executor = initialize_agent(
-    tools=[search_local_kb, web_search],
+agent_executor = AgentExecutor.from_llm_and_tools(
     llm=chat,
-    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+    tools=[search_local_kb_tool, web_search_tool],
     verbose=True,
 )
 

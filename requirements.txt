@@ -1,6 +1,7 @@
-# Requirements for RAG Agent
-langchain>=1.0,<2
+# Requirements for RAG Agent with ChromaDB and Tavily
+langchain>=0.2
 langchain-community
-chromadb
+langchain-ollama
 tavily-python
+chromadb
 python-dotenv
