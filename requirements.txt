@@ -1,8 +1,7 @@
-langchain==0.2.0
-langchain-chroma==0.1.0
-langchain-tavily==0.1.0
-langchain-ollama==0.1.0
-tavily-python==0.3.0
-chromadb==0.4.22
-python-dotenv==1.0.1
-Ollama==0.2.0
+langchain
+langchain-chroma
+langchain-ollama
+langchain-tavily
+tavily-python
+chromadb
+python-dotenv
